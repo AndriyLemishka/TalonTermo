@@ -136,6 +136,18 @@
         font-size: 10px; font-weight: 700; padding: 2px 6px;
         border-radius: 4px; margin-top: 3px;
       }
+      .btn-db-delete { background: #b91c1c; color: #fff; padding: 9px 12px; font-size: 13px; }
+      .btn-db-delete:hover:not(:disabled) { background: #991b1b; }
+      .btn-db-confirm { background: #dc2626; color: #fff; padding: 8px 14px; font-size: 13px; }
+      .btn-db-confirm:hover:not(:disabled) { background: #b91c1c; }
+      .db-confirm-box {
+        display: none; align-items: center; justify-content: space-between; gap: 14px;
+        background: #fef2f2; border: 2px solid #f87171; color: #7f1d1d;
+        padding: 12px 16px; border-radius: 10px; margin-bottom: 12px; font-size: 13px;
+      }
+      .db-confirm-box.visible { display: flex; flex-wrap: wrap; }
+      .db-confirm-text { font-weight: 600; flex: 1; min-width: 240px; }
+      .db-confirm-actions { display: flex; gap: 8px; align-items: center; }
     </style>
 
     <div class="overlay" id="overlay">
@@ -172,6 +184,14 @@
             <div class="bar"><div class="fill" id="progressFill"></div></div>
           </div>
 
+          <div class="db-confirm-box" id="dbDeleteConfirmBox">
+            <div class="db-confirm-text" id="dbDeleteConfirmText"></div>
+            <div class="db-confirm-actions">
+              <button type="button" class="btn btn-db-confirm" id="confirmDbDeleteBtn">✅ Так, видалити з бази</button>
+              <button type="button" class="btn btn-ghost" id="cancelDbDeleteBtn">Скасувати</button>
+            </div>
+          </div>
+
           <div id="tableWrap" style="display: none;">
             <div class="toolbar">
               <div class="bulk">
@@ -204,7 +224,8 @@
                 <span class="db-badge" id="dbCountBadge">База CRM: 0 тал.</span>
                 <span class="dup-badge no-dups" id="dupCounter">✓ Задубльовані: 0</span>
                 <button type="button" class="btn btn-danger" id="deleteSelectedBtn" style="display:none; padding: 9px 12px; font-size: 13px;">🗑️ Видалити вибрані (0)</button>
-                <button type="button" class="btn btn-danger" id="removeDupsBtn" style="display:none; padding: 9px 12px; font-size: 13px;">🗑️ Прибрати задубльовані</button>
+                <button type="button" class="btn btn-danger" id="removeDupsBtn" style="display:none; padding: 9px 12px; font-size: 13px;">🧹 Прибрати дублі зі списку (0)</button>
+                <button type="button" class="btn btn-db-delete" id="deleteFromDbBtn" style="display:none;">🔥 Видалити з бази даних (0)</button>
                 <button class="btn btn-primary" id="uploadBtn">Залити всі в CRM (0)</button>
               </div>
             </div>
@@ -235,36 +256,48 @@
 
   const $ = (id) => shadow.getElementById(id);
   let coupons = [];
-  const existingSerials = new Map(); // serial -> status label ('У базі', 'Активний', 'Використано', etc.)
+  const existingSerials = new Map(); // serial -> { id: string, status: string }
   let existingLoaded = false;
 
   function detectStatusLabel(text) {
     const low = (text || '').toLowerCase();
-    if (low.includes('використан') || /\bused\b/.test(low)) return 'Використано';
-    if (low.includes('активн') || low.includes('видан') || /\bissued\b/.test(low)) return 'Активний';
-    if (low.includes('простроч') || /\bexpired\b/.test(low)) return 'Прострочено';
-    if (low.includes('сплива')) return 'Спливає';
-    if (low.includes('у базі') || /\bavailable\b/.test(low)) return 'У базі';
+    if (low.includes('використан') || /\bused\b/.test(low)) return 'Використаний';
+    if (low.includes('активн') || low.includes('видан') || low.includes('сплива') || /\bissued\b/.test(low)) return 'Виданий';
+    if (low.includes('простроч') || /\bexpired\b/.test(low)) return 'Прострочений';
+    if (low.includes('у базі') || low.includes('вільн') || /\bavailable\b/.test(low)) return 'У базі';
     return '';
   }
 
-  function setExistingSerial(serial, status) {
+  function setExistingSerial(serial, status, dbId = '') {
     if (!serial) return;
     const prev = existingSerials.get(serial);
-    if (!prev || (status && prev === 'ВЖЕ Є В БАЗІ')) {
-      existingSerials.set(serial, status || 'ВЖЕ Є В БАЗІ');
+    const nextId = dbId || prev?.id || '';
+    const isConcrete = (st) => Boolean(st && st !== 'У базі' && st !== 'ВЖЕ Є В БАЗІ');
+    let nextStatus = prev?.status || 'У базі';
+    if (isConcrete(status)) {
+      nextStatus = status;
+    } else if (!prev && status) {
+      nextStatus = status;
     }
+    existingSerials.set(serial, { id: nextId, status: nextStatus });
   }
 
   function extractSerialsFromHtmlDoc(doc) {
     if (!doc) return;
     doc.querySelectorAll('.data-table tbody tr').forEach((tr) => {
       const badgeEl = tr.querySelector('.badge');
-      const statusText = (badgeEl?.textContent || '').trim() || detectStatusLabel(tr.textContent);
+      const statusText = detectStatusLabel(badgeEl?.textContent || '') || detectStatusLabel(tr.textContent) || 'У базі';
+
+      const hrefId = tr.querySelector('a[href*="/admin/tickets/"]')?.getAttribute('href')?.match(/\/admin\/tickets\/(\d+)/)?.[1] || '';
+      const formId = tr.querySelector('form[action*="/admin/tickets/"]')?.getAttribute('action')?.match(/\/admin\/tickets\/(\d+)/)?.[1] || '';
+      const checkId = tr.querySelector('input[name="ticket_ids[]"]')?.value || '';
+      const textId = tr.textContent.match(/ID\s*#(\d+)/i)?.[1] || '';
+      const dbId = hrefId || formId || checkId || textId;
+
       tr.querySelectorAll('a.cell-link strong, td strong').forEach((el) => {
         const txt = (el.textContent || '').trim();
         for (const m of txt.matchAll(/\d{5,28}/g)) {
-          setExistingSerial(m[0], statusText || 'У базі');
+          setExistingSerial(m[0], statusText, dbId);
         }
       });
     });
@@ -272,13 +305,13 @@
     doc.querySelectorAll('.data-table a.cell-link strong, .data-table td strong').forEach((el) => {
       const txt = (el.textContent || '').trim();
       for (const m of txt.matchAll(/\d{5,28}/g)) {
-        setExistingSerial(m[0], 'У базі');
+        setExistingSerial(m[0], 'У базі', '');
       }
     });
     doc.querySelectorAll('[aria-label*="талон"], [data-confirm*="талон"]').forEach((el) => {
       const attr = (el.getAttribute('aria-label') || el.getAttribute('data-confirm') || '');
       for (const m of attr.matchAll(/\d{5,28}/g)) {
-        setExistingSerial(m[0], 'У базі');
+        setExistingSerial(m[0], 'У базі', '');
       }
     });
   }
@@ -299,7 +332,7 @@
     // Layer 1a: Current DOM
     extractSerialsFromHtmlDoc(document);
 
-    // Layer 1b: All paginated HTML database pages with status= (all statuses: вільні, активні/видані, використані)
+    // Layer 1b: All paginated HTML database pages with status= (all statuses: вільні, видані, використані)
     const htmlTask = (async () => {
       try {
         let maxPage = getMaxPageFromDoc(document);
@@ -352,11 +385,11 @@
           if (!line.trim()) continue;
           const lineStatus = detectStatusLabel(line) || 'У базі';
           for (const m of line.matchAll(/\b\d{6,28}\b/g)) {
-            setExistingSerial(m[0], lineStatus);
+            setExistingSerial(m[0], lineStatus, '');
           }
           for (const rawCell of line.split(/[;,\t]+/)) {
             const cell = rawCell.replace(/^[='"\s]+|['"\s]+$/g, '');
-            if (/^\d{5,28}$/.test(cell)) setExistingSerial(cell, lineStatus);
+            if (/^\d{5,28}$/.test(cell)) setExistingSerial(cell, lineStatus, '');
           }
         }
       } catch {
@@ -374,7 +407,8 @@
     const seenPrefixes = new Set();
     for (const c of pdfCoupons) {
       const s = (c.serial_number || '').trim();
-      if (!s || existingSerials.has(s)) continue;
+      const info = existingSerials.get(s);
+      if (!s || (info && info.id)) continue;
       const prefix = s.slice(0, Math.max(6, s.length - 2));
       if (!seenPrefixes.has(prefix)) {
         seenPrefixes.add(prefix);
@@ -734,6 +768,36 @@
     setStatus(`Готово! Розпізнано талонів: ${coupons.length}${dupNote}. Перевір поля і натисни «Залити всі в CRM».`, 100);
   }
 
+  function countDbStatuses(list) {
+    let freeCount = 0;
+    let issuedCount = 0;
+    let usedCount = 0;
+    for (const c of list) {
+      if (!c._inCrm) continue;
+      if (c._dbStatus === 'Використаний') usedCount++;
+      else if (c._dbStatus === 'Виданий') issuedCount++;
+      else freeCount++;
+    }
+    return { freeCount, issuedCount, usedCount };
+  }
+
+  function getDbDeleteTargets() {
+    const checkedCrm = coupons.filter((c) => c._selected && c._inCrm);
+    return checkedCrm.length > 0 ? checkedCrm : coupons.filter((c) => c._inCrm);
+  }
+
+  function updateDbDeleteBtn() {
+    const targets = getDbDeleteTargets();
+    const dbBtn = $('deleteFromDbBtn');
+    if (targets.length > 0) {
+      dbBtn.style.display = 'inline-flex';
+      dbBtn.textContent = `🔥 Видалити з бази даних (${targets.length})`;
+    } else {
+      dbBtn.style.display = 'none';
+      $('dbDeleteConfirmBox').classList.remove('visible');
+    }
+  }
+
   function computeDuplicates() {
     const counts = new Map();
     for (const c of coupons) {
@@ -743,27 +807,36 @@
     }
 
     let dupCount = 0;
+    let crmCount = 0;
     for (const c of coupons) {
       const s = (c.serial_number || '').trim();
-      c._inCrm = Boolean(s && existingSerials.has(s));
+      const info = s ? existingSerials.get(s) : null;
+      c._inCrm = Boolean(info);
+      c._dbId = info?.id || '';
+      c._dbStatus = info?.status || '';
       c._inBatch = Boolean(s && counts.get(s) > 1);
       c._isDup = c._inCrm || c._inBatch;
       if (c._isDup) dupCount++;
+      if (c._inCrm) crmCount++;
     }
 
     $('dbCountBadge').textContent = `База CRM: ${existingSerials.size} тал.`;
     const counter = $('dupCounter');
     const removeBtn = $('removeDupsBtn');
     if (dupCount > 0) {
-      counter.textContent = `⚠️ Задубльовані: ${dupCount}`;
+      const { freeCount, issuedCount, usedCount } = countDbStatuses(coupons);
+      counter.textContent = crmCount > 0
+        ? `⚠️ Задубльовані: ${dupCount} (Вільні: ${freeCount} · Видані: ${issuedCount} · Використані: ${usedCount})`
+        : `⚠️ Задубльовані: ${dupCount} (дублі у файлі)`;
       counter.className = 'dup-badge has-dups';
       removeBtn.style.display = 'inline-flex';
-      removeBtn.textContent = `🗑️ Прибрати задубльовані (${dupCount})`;
+      removeBtn.textContent = `🧹 Прибрати дублі зі списку (${dupCount})`;
     } else {
       counter.textContent = '✓ Задубльовані: 0';
       counter.className = 'dup-badge no-dups';
       removeBtn.style.display = 'none';
     }
+    updateDbDeleteBtn();
     return dupCount;
   }
 
@@ -775,6 +848,7 @@
     checkAll.indeterminate = selectedCount > 0 && selectedCount < coupons.length;
     delBtn.style.display = selectedCount > 0 ? 'inline-flex' : 'none';
     delBtn.textContent = `🗑️ Видалити вибрані (${selectedCount})`;
+    updateDbDeleteBtn();
   }
 
   function renderTable() {
@@ -789,8 +863,7 @@
       if (c._isDup) tr.classList.add('is-duplicate');
 
       let dupTagHtml = '';
-      const st = existingSerials.get((c.serial_number || '').trim()) || '';
-      const stLabel = (st && st !== 'ВЖЕ Є В БАЗІ') ? ` (${st})` : '';
+      const stLabel = (c._dbStatus && c._dbStatus !== 'ВЖЕ Є В БАЗІ') ? ` (${c._dbStatus})` : '';
       if (c._inCrm && c._inBatch) dupTagHtml = `<span class="dup-tag">ВЖЕ Є В БАЗІ${stLabel} + ДУБЛЬ</span>`;
       else if (c._inCrm) dupTagHtml = `<span class="dup-tag">ВЖЕ Є В БАЗІ${stLabel}</span>`;
       else if (c._inBatch) dupTagHtml = '<span class="dup-tag">ДУБЛЬ У ФАЙЛІ</span>';
@@ -866,6 +939,92 @@
     renderTable();
   });
 
+  $('deleteFromDbBtn').addEventListener('click', () => {
+    const targets = getDbDeleteTargets();
+    if (!targets.length) return;
+    const { freeCount, issuedCount, usedCount } = countDbStatuses(targets);
+    $('dbDeleteConfirmText').textContent =
+      `⚠️ Підтвердження: видалити з бази даних CRM ${targets.length} талон(ів)? (Вільні: ${freeCount} · Видані: ${issuedCount} · Використані: ${usedCount})`;
+    $('confirmDbDeleteBtn').textContent = `✅ Так — видалити ${targets.length} талон(ів) з бази`;
+    $('dbDeleteConfirmBox').classList.add('visible');
+  });
+
+  $('cancelDbDeleteBtn').addEventListener('click', () => {
+    $('dbDeleteConfirmBox').classList.remove('visible');
+  });
+
+  $('confirmDbDeleteBtn').addEventListener('click', async () => {
+    const targets = getDbDeleteTargets();
+    if (!targets.length) return;
+
+    const form = document.querySelector('form[action$="/admin/tickets"]');
+    const tokenInput = form?.querySelector('input[name="_token"]') || document.querySelector('input[name="_token"]');
+    if (!tokenInput || !tokenInput.value) {
+      alert('Не знайдено CSRF _token на сторінці. Онови сторінку та спробуй ще раз.');
+      return;
+    }
+
+    $('dbDeleteConfirmBox').classList.remove('visible');
+    $('deleteFromDbBtn').disabled = true;
+    $('uploadBtn').disabled = true;
+
+    let currentToken = tokenInput.value;
+    let delOk = 0;
+    let delFail = 0;
+
+    for (let i = 0; i < targets.length; i++) {
+      const c = targets[i];
+      const serial = (c.serial_number || '').trim();
+      setStatus(`Видаляю з бази CRM ${i + 1} з ${targets.length} (${serial})...`, Math.round(((i + 1) / targets.length) * 100));
+
+      try {
+        if (!c._dbId && serial) {
+          const searchRes = await fetch(`/admin/tickets?status=&q=${encodeURIComponent(serial)}&t=${Date.now()}`, {
+            credentials: 'same-origin',
+            cache: 'no-store',
+          });
+          if (searchRes.ok) {
+            extractSerialsFromHtmlDoc(new DOMParser().parseFromString(await searchRes.text(), 'text/html'));
+            c._dbId = existingSerials.get(serial)?.id || '';
+          }
+        }
+
+        if (!c._dbId) {
+          delFail++;
+          continue;
+        }
+
+        const res = await fetch(`/admin/tickets/${c._dbId}/delete`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ _token: currentToken }).toString(),
+        });
+
+        if (res.ok) {
+          delOk++;
+          existingSerials.delete(serial);
+          const html = await res.text();
+          const mTok = html.match(/name=["']_token["'][^>]*value=["']([^"']+)["']/i)
+            || html.match(/value=["']([^"']+)["'][^>]*name=["']_token["']/i);
+          if (mTok && mTok[1]) {
+            currentToken = mTok[1];
+            tokenInput.value = currentToken;
+          }
+        } else {
+          delFail++;
+        }
+      } catch {
+        delFail++;
+      }
+    }
+
+    $('deleteFromDbBtn').disabled = false;
+    $('uploadBtn').disabled = false;
+    renderTable();
+    setStatus(`Видалено з бази даних CRM: ${delOk} талон(ів) (помилок: ${delFail}).`, 100);
+  });
+
   $('applyBulkBtn').addEventListener('click', () => {
     const f = $('bulkFuel').value;
     const a = $('bulkAzs').value;
@@ -924,7 +1083,7 @@
         });
         if (res.ok) {
           ok++;
-          if (c.serial_number) existingSerials.set(c.serial_number.trim(), 'У базі');
+          if (c.serial_number) existingSerials.set(c.serial_number.trim(), { id: '', status: 'У базі' });
           const html = await res.text();
           const mTok = html.match(/name=["']_token["'][^>]*value=["']([^"']+)["']/i)
             || html.match(/value=["']([^"']+)["'][^>]*name=["']_token["']/i);

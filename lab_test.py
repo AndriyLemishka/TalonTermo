@@ -78,10 +78,11 @@ def start_mock_crm_server():
 
     state = {
         "submissions": [],
+        "deleted_ids": [],
         "current_token": "bb44ca7dde6fb8a24576f33aaa5298e45f081e1d0991b9141f6a083b6b6d044c",
         "export_enabled": True,
         "export_csv": "ID;Номер талона;Пальне\n",
-        "db_pages": {},      # {page_num: [serial, ...]}
+        "db_pages": {},      # {page_num: [serial or (serial, status) or (serial, status, id), ...]}
         "search_db": [],     # [serial, ...]
         "record_to_db": False,
         "lock": threading.Lock(),
@@ -89,13 +90,16 @@ def start_mock_crm_server():
 
     def render_rows_html(items):
         out = []
-        for item in items:
-            if isinstance(item, tuple):
+        for idx, item in enumerate(items, start=1):
+            if isinstance(item, tuple) and len(item) == 3:
+                s, status, row_id = item
+            elif isinstance(item, tuple):
                 s, status = item
+                row_id = 9000 + idx
             else:
-                s, status = item, "У базі"
+                s, status, row_id = item, "У базі", 9000 + idx
             out.append(
-                f'<tr><td><a class="cell-link" href="/admin/tickets/1/edit"><strong>{s}</strong></a></td>'
+                f'<tr><td><a class="cell-link" href="/admin/tickets/{row_id}/edit"><strong>{s}</strong><small>ID #{row_id}</small></a></td>'
                 f'<td><span class="badge">{status}</span></td></tr>'
             )
         return "".join(out)
@@ -124,7 +128,7 @@ def start_mock_crm_server():
                 page_val = int((qs.get("page") or ["1"])[0])
 
                 if q_val:
-                    matched = [s for s in state["search_db"] if q_val in s]
+                    matched = [s for s in state["search_db"] if q_val in (s[0] if isinstance(s, tuple) else s)]
                     html = f'<html><body><table class="data-table"><tbody>{render_rows_html(matched)}</tbody></table></body></html>'
                 elif page_val > 1:
                     serials = state["db_pages"].get(page_val, [])
@@ -167,15 +171,36 @@ def start_mock_crm_server():
                 self.end_headers()
 
         def do_POST(self):
-            if self.path != "/admin/tickets":
-                self.send_response(404)
-                self.end_headers()
-                return
-
             length = int(self.headers.get("Content-Length", "0"))
             raw_body = self.rfile.read(length).decode("utf-8")
             parsed = urllib.parse.parse_qs(raw_body, keep_blank_values=True)
             flat = {k: v[0] if v else "" for k, v in parsed.items()}
+
+            if self.path.startswith("/admin/tickets/") and self.path.endswith("/delete"):
+                parts = self.path.strip("/").split("/")
+                del_id = parts[2] if len(parts) == 4 else ""
+                with state["lock"]:
+                    if flat.get("_token") != state["current_token"]:
+                        self.send_response(419)
+                        self.end_headers()
+                        self.wfile.write(b"CSRF token mismatch")
+                        return
+                    state["deleted_ids"].append(del_id)
+                    next_tok = f"lab_del_token_{len(state['deleted_ids'])}"
+                    state["current_token"] = next_tok
+
+                resp_html = f'<html><body><input type="hidden" name="_token" value="{next_tok}">Deleted</body></html>'.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(resp_html)))
+                self.end_headers()
+                self.wfile.write(resp_html)
+                return
+
+            if self.path != "/admin/tickets":
+                self.send_response(404)
+                self.end_headers()
+                return
 
             with state["lock"]:
                 expected_tok = state["current_token"]
@@ -389,18 +414,46 @@ def run_extension_e2e_tests():
                     };
                 }""")
 
-            # --- DB Test 1: Paginated DB Table (Page 2 Issued + Page 3 Used, CSV export disabled) ---
+            # --- DB Test 1: Paginated DB Table (Page 2 Issued + Page 3 Used) + Delete from DB with Confirmation ---
             state["export_enabled"] = False
+            state["deleted_ids"].clear()
             state["db_pages"] = {
-                2: [("99999600000025241326", "Активний")],
-                3: [("99999600000025241340", "Використано")],
+                2: [("99999600000025241326", "Активний", 701)],
+                3: [("99999600000025241340", "Використано", 702)],
             }
             state["search_db"] = []
             res1 = import_pdf_and_get_dups(DP_PDF, 37)
-            assert res1["counterText"] == "⚠️ Задубльовані: 2", f"DB Test 1 counter={res1['counterText']}"
+            assert res1["counterText"] == "⚠️ Задубльовані: 2 (Вільні: 0 · Видані: 1 · Використані: 1)", (
+                f"DB Test 1 counter={res1['counterText']}"
+            )
             assert res1["dupSerials"] == ["99999600000025241326", "99999600000025241340"], res1["dupSerials"]
-            assert res1["dupTags"] == ["ВЖЕ Є В БАЗІ (Активний)", "ВЖЕ Є В БАЗІ (Використано)"], res1["dupTags"]
-            print(f"  [OK] DB Test 1 (Paginated DB pages 2 Активний & 3 Використано): {res1['counterText']} ({res1['dbBadge']})")
+            assert res1["dupTags"] == ["ВЖЕ Є В БАЗІ (Виданий)", "ВЖЕ Є В БАЗІ (Використаний)"], res1["dupTags"]
+
+            # Click "Delete from DB" -> verify confirmation notification -> click Confirm
+            page.locator("#talonauto-host >> #deleteFromDbBtn").click()
+            confirm_ui = page.evaluate("""() => {
+                const sr = document.getElementById('talonauto-host').shadowRoot;
+                return {
+                    visible: sr.getElementById('dbDeleteConfirmBox').classList.contains('visible'),
+                    text: sr.getElementById('dbDeleteConfirmText').textContent.trim(),
+                    btnText: sr.getElementById('confirmDbDeleteBtn').textContent.trim(),
+                };
+            }""")
+            assert confirm_ui["visible"] is True, "Confirmation banner did not appear"
+            assert "2 талон(ів)" in confirm_ui["text"] and "Видані: 1" in confirm_ui["text"] and "Використані: 1" in confirm_ui["text"], confirm_ui
+            assert "Так — видалити 2 талон(ів) з бази" in confirm_ui["btnText"], confirm_ui
+
+            page.locator("#talonauto-host >> #confirmDbDeleteBtn").click()
+            page.wait_for_function(
+                """() => {
+                    const sr = document.getElementById('talonauto-host')?.shadowRoot;
+                    return sr && sr.getElementById('statusText')?.textContent.includes('Видалено з бази даних CRM: 2');
+                }""",
+                timeout=30_000,
+            )
+            assert state["deleted_ids"] == ["701", "702"], f"Expected deleted IDs ['701', '702'], got {state['deleted_ids']}"
+            assert page.locator("#talonauto-host >> #tbody tr.is-duplicate").count() == 0
+            print(f"  [OK] DB Test 1 (Status breakdown + Confirm notification + Delete from DB): deleted IDs {state['deleted_ids']}")
 
             # --- DB Test 2: Tricky CSV Export ("ID талона" column + Excel ="..." escaping) + Bulk Checkboxes ---
             state["export_enabled"] = True
@@ -413,7 +466,9 @@ def run_extension_e2e_tests():
                 '"103";="99999600000025241360";"ДП"\n'
             )
             res2 = import_pdf_and_get_dups(DP_PDF, 37)
-            assert res2["counterText"] == "⚠️ Задубльовані: 3", f"DB Test 2 counter={res2['counterText']}"
+            assert res2["counterText"] == "⚠️ Задубльовані: 3 (Вільні: 3 · Видані: 0 · Використані: 0)", (
+                f"DB Test 2 counter={res2['counterText']}"
+            )
             assert res2["dupSerials"] == [
                 "99999600000025241324",
                 "99999600000025241335",
@@ -453,7 +508,9 @@ def run_extension_e2e_tests():
             state["db_pages"] = {}
             state["search_db"] = ["99999600000025240770", "99999600000025240867"]
             res3 = import_pdf_and_get_dups(A95_PDF, 100)
-            assert res3["counterText"] == "⚠️ Задубльовані: 2", f"DB Test 3 counter={res3['counterText']}"
+            assert res3["counterText"] == "⚠️ Задубльовані: 2 (Вільні: 2 · Видані: 0 · Використані: 0)", (
+                f"DB Test 3 counter={res3['counterText']}"
+            )
             assert res3["dupSerials"] == ["99999600000025240770", "99999600000025240867"], res3["dupSerials"]
             print(f"  [OK] DB Test 3 (DB Search ?q= on 100 A-95 PDF): {res3['counterText']}")
 
@@ -478,7 +535,9 @@ def run_extension_e2e_tests():
             assert len(state["submissions"]) == 37
 
             res4_after = import_pdf_and_get_dups(DP_PDF, 37)
-            assert res4_after["counterText"] == "⚠️ Задубльовані: 37", f"DB Test 4 counter={res4_after['counterText']}"
+            assert res4_after["counterText"] == "⚠️ Задубльовані: 37 (Вільні: 37 · Видані: 0 · Використані: 0)", (
+                f"DB Test 4 counter={res4_after['counterText']}"
+            )
             assert len(res4_after["dupSerials"]) == 37
             print(f"  [OK] DB Test 4 (Re-import after upload): all 37/37 flagged red ({res4_after['counterText']})")
 

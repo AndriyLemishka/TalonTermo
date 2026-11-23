@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TalonAuto — Імпорт талонів з PDF у TermoUnion CRM",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "Нарізає талони з PDF, розпізнає поля, звіряє дублі з базою та додає в TermoUnion CRM в один клік.",
   "background": {
     "service_worker": "background.js"
