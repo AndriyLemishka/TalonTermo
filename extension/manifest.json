@@ -8,7 +8,9 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://driver.tun.com.ua/admin/tickets*"],
+      "matches": [
+        "https://driver.tun.com.ua/admin/tickets*"
+      ],
       "js": [
         "lib/pdf.worker.min.js",
         "lib/pdf.min.js",
@@ -22,8 +24,15 @@
         "https://rawcdn.githack.com/AndriyLemishka/TalonTermo/*",
         "file:///*TalonTermo*"
       ],
-      "js": ["helper_bridge.js"],
+      "js": [
+        "helper_bridge.js"
+      ],
       "run_at": "document_end"
     }
-  ]
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
 }
