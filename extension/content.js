@@ -108,6 +108,11 @@
         display: inline-flex; align-items: center; gap: 6px;
         padding: 7px 12px; border-radius: 8px; font-size: 13px; font-weight: 700;
       }
+      .db-badge {
+        display: inline-flex; align-items: center;
+        padding: 7px 10px; border-radius: 8px; font-size: 12px; font-weight: 600;
+        background: #e2e8f0; color: #334155;
+      }
       .dup-badge.has-dups { background: #fee2e2; color: #b91c1c; border: 1px solid #f87171; }
       .dup-badge.no-dups { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
       tr.is-duplicate { background: #fee2e2 !important; }
@@ -193,6 +198,7 @@
                 <button class="btn btn-ghost" id="applyBulkBtn">Застосувати до всіх</button>
               </div>
               <div class="actions-right">
+                <span class="db-badge" id="dbCountBadge">База CRM: 0 тал.</span>
                 <span class="dup-badge no-dups" id="dupCounter">✓ Задубльовані: 0</span>
                 <button type="button" class="btn btn-danger" id="removeDupsBtn" style="display:none; padding: 9px 12px; font-size: 13px;">🗑️ Прибрати задубльовані</button>
                 <button class="btn btn-primary" id="uploadBtn">Залити всі в CRM (0)</button>
@@ -227,83 +233,134 @@
   const existingSerials = new Set();
   let existingLoaded = false;
 
+  function extractSerialsFromHtmlDoc(doc) {
+    if (!doc) return;
+    doc.querySelectorAll('.data-table a.cell-link strong, .data-table td strong').forEach((el) => {
+      const txt = (el.textContent || '').trim();
+      for (const m of txt.matchAll(/\d{5,28}/g)) {
+        existingSerials.add(m[0]);
+      }
+    });
+    doc.querySelectorAll('[aria-label*="талон"], [data-confirm*="талон"]').forEach((el) => {
+      const attr = (el.getAttribute('aria-label') || el.getAttribute('data-confirm') || '');
+      for (const m of attr.matchAll(/\d{5,28}/g)) {
+        existingSerials.add(m[0]);
+      }
+    });
+  }
+
+  function getMaxPageFromDoc(doc) {
+    let maxPage = 1;
+    doc.querySelectorAll('.pagination a.page-btn[href]').forEach((a) => {
+      const href = a.getAttribute('href') || '';
+      const m = href.match(/[?&]page=(\d+)/);
+      if (m) maxPage = Math.max(maxPage, Number(m[1]));
+    });
+    return maxPage;
+  }
+
   async function loadExistingSerials(force = false) {
     if (existingLoaded && !force) return;
 
-    // 1. Collect serials already visible in the current CRM table DOM
-    document.querySelectorAll('.data-table a.cell-link strong, .data-table td strong').forEach((el) => {
-      const txt = (el.textContent || '').trim();
-      if (/^\d{6,28}$/.test(txt)) existingSerials.add(txt);
-    });
+    // Layer 1a: Current DOM
+    extractSerialsFromHtmlDoc(document);
 
-    // 2. Fetch full CSV export from /admin/tickets/export (or href on export button)
-    const exportHref = document.querySelector('a[href*="/admin/tickets/export"]')?.getAttribute('href') || '/admin/tickets/export';
-    let exportOk = false;
-    try {
-      const url = new URL(exportHref, window.location.origin).pathname;
-      const res = await fetch(`${url}?t=${Date.now()}`, { credentials: 'same-origin', cache: 'no-store' });
-      if (res.ok) {
-        const ctype = (res.headers.get('content-type') || '').toLowerCase();
-        const text = await res.text();
-        if (!ctype.includes('text/html') && !/^\s*<!doctype|^\s*<html/i.test(text)) {
-          exportOk = true;
-          const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter((l) => l.trim());
-          if (lines.length) {
-            const firstLine = lines[0];
-            const delim = (firstLine.split(';').length >= firstLine.split(',').length) ? ';' : ',';
-            const splitRow = (row) => row.split(delim).map((cell) => cell.trim().replace(/^["']|["']$/g, '').trim());
-            const headers = splitRow(firstLine).map((h) => h.toLowerCase());
-            const serialCol = headers.findIndex((h) =>
-              h.includes('номер') || h.includes('талон') || h.includes('serial') || h.includes('code') || h.includes('number')
-            );
-
-            const startRow = serialCol !== -1 ? 1 : 0;
-            for (let i = startRow; i < lines.length; i++) {
-              const cells = splitRow(lines[i]);
-              if (serialCol !== -1 && cells[serialCol]) {
-                const val = cells[serialCol];
-                if (val) existingSerials.add(val);
-              } else {
-                for (const cell of cells) {
-                  if (/^\d{6,28}$/.test(cell)) existingSerials.add(cell);
-                }
-              }
-            }
-          }
-        }
-      }
-    } catch {
-      // Ignore and try pagination fallback below
-    }
-
-    // 3. Fallback: scan pagination pages if CSV export wasn't available
-    if (!exportOk) {
+    // Layer 1b: All paginated HTML database pages (/admin/tickets?page=1..N)
+    const htmlTask = (async () => {
       try {
-        const pageLinks = Array.from(document.querySelectorAll('.pagination a.page-btn[href]'))
-          .map((a) => a.getAttribute('href'))
-          .filter(Boolean);
-        let maxPage = 1;
-        for (const href of pageLinks) {
-          const m = href.match(/[?&]page=(\d+)/);
-          if (m) maxPage = Math.max(maxPage, Number(m[1]));
+        let maxPage = getMaxPageFromDoc(document);
+        const page1Res = await fetch(`/admin/tickets?page=1&t=${Date.now()}`, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (page1Res.ok) {
+          const doc1 = new DOMParser().parseFromString(await page1Res.text(), 'text/html');
+          extractSerialsFromHtmlDoc(doc1);
+          maxPage = Math.max(maxPage, getMaxPageFromDoc(doc1));
         }
-        const limit = Math.min(maxPage, 30);
-        for (let p = 2; p <= limit; p++) {
-          const res = await fetch(`/admin/tickets?page=${p}`, { credentials: 'same-origin', cache: 'no-store' });
-          if (!res.ok) break;
-          const html = await res.text();
-          const doc = new DOMParser().parseFromString(html, 'text/html');
-          doc.querySelectorAll('.data-table a.cell-link strong, .data-table td strong').forEach((el) => {
-            const txt = (el.textContent || '').trim();
-            if (/^\d{6,28}$/.test(txt)) existingSerials.add(txt);
-          });
+
+        const limit = Math.min(maxPage, 50);
+        for (let start = 2; start <= limit; start += 6) {
+          const batch = [];
+          for (let p = start; p < start + 6 && p <= limit; p++) {
+            batch.push(
+              fetch(`/admin/tickets?page=${p}&t=${Date.now()}`, {
+                credentials: 'same-origin',
+                cache: 'no-store',
+              })
+                .then((res) => (res.ok ? res.text() : ''))
+                .then((html) => {
+                  if (html) extractSerialsFromHtmlDoc(new DOMParser().parseFromString(html, 'text/html'));
+                })
+                .catch(() => {})
+            );
+          }
+          await Promise.all(batch);
         }
       } catch {
         // Ignore network errors
       }
+    })();
+
+    // Layer 2: Full CSV export (/admin/tickets/export)
+    const csvTask = (async () => {
+      const exportHref = document.querySelector('a[href*="/admin/tickets/export"]')?.getAttribute('href') || '/admin/tickets/export';
+      try {
+        const url = new URL(exportHref, window.location.origin).pathname;
+        const res = await fetch(`${url}?t=${Date.now()}`, { credentials: 'same-origin', cache: 'no-store' });
+        if (!res.ok) return;
+        const ctype = (res.headers.get('content-type') || '').toLowerCase();
+        const text = await res.text();
+        if (ctype.includes('text/html') || /^\s*<!doctype|^\s*<html/i.test(text)) return;
+
+        const cleanCsv = text.replace(/^\uFEFF/, '');
+        for (const m of cleanCsv.matchAll(/\b\d{6,28}\b/g)) {
+          existingSerials.add(m[0]);
+        }
+        for (const line of cleanCsv.split(/\r?\n/)) {
+          for (const rawCell of line.split(/[;,\t]+/)) {
+            const cell = rawCell.replace(/^[='"\s]+|['"\s]+$/g, '');
+            if (/^\d{5,28}$/.test(cell)) existingSerials.add(cell);
+          }
+        }
+      } catch {
+        // Ignore export errors
+      }
+    })();
+
+    await Promise.all([htmlTask, csvTask]);
+    existingLoaded = true;
+  }
+
+  // Layer 3: Targeted database search (/admin/tickets?q=<prefix>) for uploaded PDF serials
+  async function checkPdfSerialsAgainstDbSearch(pdfCoupons) {
+    const prefixes = [];
+    const seenPrefixes = new Set();
+    for (const c of pdfCoupons) {
+      const s = (c.serial_number || '').trim();
+      if (!s || existingSerials.has(s)) continue;
+      const prefix = s.slice(0, Math.max(6, s.length - 2));
+      if (!seenPrefixes.has(prefix)) {
+        seenPrefixes.add(prefix);
+        prefixes.push(prefix);
+        if (prefixes.length >= 15) break;
+      }
     }
 
-    existingLoaded = true;
+    for (let i = 0; i < prefixes.length; i += 5) {
+      const batch = prefixes.slice(i, i + 5).map((prefix) =>
+        fetch(`/admin/tickets?q=${encodeURIComponent(prefix)}&t=${Date.now()}`, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        })
+          .then((res) => (res.ok ? res.text() : ''))
+          .then((html) => {
+            if (html) extractSerialsFromHtmlDoc(new DOMParser().parseFromString(html, 'text/html'));
+          })
+          .catch(() => {})
+      );
+      await Promise.all(batch);
+    }
   }
 
   shadow.querySelectorAll('.fuel-pill').forEach((btn) => {
@@ -634,6 +691,7 @@
     }
 
     await existingPromise;
+    await checkPdfSerialsAgainstDbSearch(coupons);
     renderTable();
     const dupCount = coupons.filter((c) => c._isDup).length;
     const dupNote = dupCount ? ` (знайдено задубльованих: ${dupCount})` : '';
@@ -657,6 +715,7 @@
       if (c._isDup) dupCount++;
     }
 
+    $('dbCountBadge').textContent = `База CRM: ${existingSerials.size} тал.`;
     const counter = $('dupCounter');
     const removeBtn = $('removeDupsBtn');
     if (dupCount > 0) {
