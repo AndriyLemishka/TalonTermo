@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TalonTermo — Швидка дія</title>
+<style>
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #f4f6f9; font-family: "Segoe UI", system-ui, sans-serif; color: #162235; padding: 20px;
+  }
+  .card {
+    background: #fff; border: 1px solid #dde3ec; border-radius: 16px; padding: 28px;
+    max-width: 680px; width: 100%; box-shadow: 0 12px 32px rgba(15, 37, 62, 0.08); text-align: center;
+  }
+  h1 { margin: 0 0 8px; font-size: 21px; color: #0f253e; }
+  p { margin: 0 0 16px; color: #475569; font-size: 14px; line-height: 1.5; }
+  .code {
+    background: #0b1929; color: #f8fafc; font-family: Consolas, monospace; font-size: 12px;
+    padding: 12px 14px; border-radius: 9px; word-break: break-all; text-align: left;
+    border-left: 4px solid #e86b1a; margin-bottom: 16px;
+  }
+  .btn {
+    background: #e86b1a; color: #fff; border: none; border-radius: 10px;
+    padding: 12px 22px; font-size: 15px; font-weight: 700; cursor: pointer;
+  }
+  .btn:hover { background: #d15b10; }
+  .btn.ok { background: #15803d; }
+  .status { font-weight: 700; color: #15803d; margin-top: 12px; min-height: 22px; font-size: 14px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1 id="title">TalonTermo</h1>
+    <p id="desc"></p>
+    <div class="code" id="codeBox"></div>
+    <button class="btn" id="actionBtn"></button>
+    <div class="status" id="status"></div>
+  </div>
+
+  <script>
+    const CMD_TEXT = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/AndriyLemishka/TalonTermo/main/install.ps1 | iex"';
+    const target = new URLSearchParams(window.location.search).get('target') || 'copycmd';
+
+    const titleEl = document.getElementById('title');
+    const descEl = document.getElementById('desc');
+    const codeBox = document.getElementById('codeBox');
+    const actionBtn = document.getElementById('actionBtn');
+    const statusEl = document.getElementById('status');
+
+    async function doCopy(text, okMsg) {
+      try {
+        await navigator.clipboard.writeText(text);
+        actionBtn.classList.add('ok');
+        statusEl.textContent = okMsg;
+        return true;
+      } catch {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        if (ok) {
+          actionBtn.classList.add('ok');
+          statusEl.textContent = okMsg;
+        }
+        return ok;
+      }
+    }
+
+    if (target === 'extensions') {
+      titleEl.textContent = '🌐 Відкриття chrome://extensions';
+      descEl.textContent = 'Якщо розширення ще не відкрилося автоматично — натисни кнопку нижче або встав скопійовану адресу в адресний рядок Chrome (Ctrl+T → Ctrl+V → Enter):';
+      codeBox.textContent = 'chrome://extensions';
+      actionBtn.textContent = '📋 Скопіювати chrome://extensions і відкрити';
+
+      setTimeout(() => {
+        if (document.documentElement.dataset.talontermoInstalled === '1') return;
+        doCopy('chrome://extensions', '✓ Адресу chrome://extensions скопійовано! Натисни Ctrl+T → Ctrl+V → Enter');
+        // Invoke custom protocol registered by install.ps1 if available
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = 'talontermo://extensions';
+        document.body.appendChild(iframe);
+      }, 350);
+
+      actionBtn.addEventListener('click', () => {
+        doCopy('chrome://extensions', '✓ Скопійовано! Натисни Ctrl+T → Ctrl+V → Enter у Chrome.');
+        window.location.href = 'talontermo://extensions';
+      });
+    } else {
+      titleEl.textContent = '📋 Копіювання команди встановлення CMD';
+      descEl.textContent = 'Відкрий CMD (Win + R → cmd → Enter) і встав команду кнопкою Ctrl+V (або правим кліком миші):';
+      codeBox.textContent = CMD_TEXT;
+      actionBtn.textContent = '📋 Скопіювати команду для CMD';
+
+      doCopy(CMD_TEXT, '✓ Команду скопійовано в буфер обміну! Відкрий CMD (Win+R → cmd) і натисни Ctrl+V');
+      actionBtn.addEventListener('click', () => {
+        doCopy(CMD_TEXT, '✓ Команду скопійовано в буфер обміну! Відкрий CMD (Win+R → cmd) і натисни Ctrl+V');
+      });
+    }
+  </script>
+</body>
+</html>

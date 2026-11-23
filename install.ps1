@@ -43,6 +43,23 @@ if ($desktop -and (Test-Path $desktop)) {
     Set-Content -Path $desktopCmd -Value $updaterContent -Encoding Ascii -ErrorAction SilentlyContinue
 }
 
+# Реєстрація протоколу talontermo://extensions для відкриття chrome://extensions за посиланням
+try {
+    $vbsPath = Join-Path $baseDir 'open_chrome_ext.vbs'
+    $vbsCode = "Set sh = CreateObject(`"WScript.Shell`")`r`nsh.Run `"chrome.exe `"`"chrome://extensions`"`"`", 1, False"
+    Set-Content -Path $vbsPath -Value $vbsCode -Encoding Ascii
+
+    $protoKey = 'HKCU:\Software\Classes\talontermo'
+    New-Item -Path $protoKey -Force | Out-Null
+    Set-ItemProperty -Path $protoKey -Name '(Default)' -Value 'URL:TalonTermo Protocol'
+    Set-ItemProperty -Path $protoKey -Name 'URL Protocol' -Value ''
+    $cmdKey = Join-Path $protoKey 'shell\open\command'
+    New-Item -Path $cmdKey -Force | Out-Null
+    Set-ItemProperty -Path $cmdKey -Name '(Default)' -Value "wscript.exe `"$vbsPath`""
+} catch {
+    # Не критично, якщо реєстр обмежений політиками
+}
+
 try {
     Set-Clipboard -Value $extDest
     $copiedNote = ' (шлях вже скопійовано в буфер обміну!)'

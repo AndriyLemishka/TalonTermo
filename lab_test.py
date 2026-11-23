@@ -87,11 +87,18 @@ def start_mock_crm_server():
         "lock": threading.Lock(),
     }
 
-    def render_rows_html(serials):
-        return "".join(
-            f'<tr><td><a class="cell-link" href="/admin/tickets/1/edit"><strong>{s}</strong></a></td></tr>'
-            for s in serials
-        )
+    def render_rows_html(items):
+        out = []
+        for item in items:
+            if isinstance(item, tuple):
+                s, status = item
+            else:
+                s, status = item, "У базі"
+            out.append(
+                f'<tr><td><a class="cell-link" href="/admin/tickets/1/edit"><strong>{s}</strong></a></td>'
+                f'<td><span class="badge">{status}</span></td></tr>'
+            )
+        return "".join(out)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -382,20 +389,20 @@ def run_extension_e2e_tests():
                     };
                 }""")
 
-            # --- DB Test 1: Paginated DB Table (Page 2 & Page 3, CSV export disabled) ---
+            # --- DB Test 1: Paginated DB Table (Page 2 Issued + Page 3 Used, CSV export disabled) ---
             state["export_enabled"] = False
             state["db_pages"] = {
-                2: ["99999600000025241326"],
-                3: ["99999600000025241340"],
+                2: [("99999600000025241326", "Активний")],
+                3: [("99999600000025241340", "Використано")],
             }
             state["search_db"] = []
             res1 = import_pdf_and_get_dups(DP_PDF, 37)
             assert res1["counterText"] == "⚠️ Задубльовані: 2", f"DB Test 1 counter={res1['counterText']}"
             assert res1["dupSerials"] == ["99999600000025241326", "99999600000025241340"], res1["dupSerials"]
-            assert all(t == "ВЖЕ Є В БАЗІ" for t in res1["dupTags"]), res1["dupTags"]
-            print(f"  [OK] DB Test 1 (Paginated DB pages 2 & 3): {res1['counterText']} ({res1['dbBadge']})")
+            assert res1["dupTags"] == ["ВЖЕ Є В БАЗІ (Активний)", "ВЖЕ Є В БАЗІ (Використано)"], res1["dupTags"]
+            print(f"  [OK] DB Test 1 (Paginated DB pages 2 Активний & 3 Використано): {res1['counterText']} ({res1['dbBadge']})")
 
-            # --- DB Test 2: Tricky CSV Export ("ID талона" column + Excel ="..." escaping) ---
+            # --- DB Test 2: Tricky CSV Export ("ID талона" column + Excel ="..." escaping) + Bulk Checkboxes ---
             state["export_enabled"] = True
             state["db_pages"] = {}
             state["search_db"] = []
@@ -425,7 +432,21 @@ def run_extension_e2e_tests():
             assert after_remove["rowCount"] == 34, f"Expected 34 rows after removing 3 dups, got {after_remove['rowCount']}"
             assert after_remove["counterText"] == "✓ Задубльовані: 0", after_remove["counterText"]
             assert after_remove["dupRowCount"] == 0
-            print("  [OK] DB Test 2 (Tricky CSV + Excel =\"...\" escaping + remove button): 3 dups caught & removed")
+
+            # Multi-select checkboxes: pick 2 rows, delete them, then Select All and delete remaining 32
+            page.locator("#talonauto-host >> .row-check").nth(0).check()
+            page.locator("#talonauto-host >> .row-check").nth(1).check()
+            sel2_btn = page.locator("#talonauto-host >> #deleteSelectedBtn").text_content().strip()
+            assert sel2_btn == "🗑️ Видалити вибрані (2)", f"Unexpected delete button text: {sel2_btn}"
+            page.locator("#talonauto-host >> #deleteSelectedBtn").click()
+            assert page.locator("#talonauto-host >> #tbody tr").count() == 32
+
+            page.locator("#talonauto-host >> #checkAllRows").check()
+            sel32_btn = page.locator("#talonauto-host >> #deleteSelectedBtn").text_content().strip()
+            assert sel32_btn == "🗑️ Видалити вибрані (32)", f"Unexpected select-all delete text: {sel32_btn}"
+            page.locator("#talonauto-host >> #deleteSelectedBtn").click()
+            assert page.locator("#talonauto-host >> #tbody tr").count() == 0
+            print("  [OK] DB Test 2 (Tricky CSV + Excel =\"...\" + Bulk Checkboxes & Select-All Delete): passed")
 
             # --- DB Test 3: Database Search (/admin/tickets?q=<prefix>) ---
             state["export_enabled"] = False

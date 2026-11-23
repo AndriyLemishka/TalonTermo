@@ -1,8 +1,11 @@
 {
   "manifest_version": 3,
   "name": "TalonAuto — Імпорт талонів з PDF у TermoUnion CRM",
-  "version": "1.1.1",
-  "description": "Нарізає талони з PDF, розпізнає поля та додає в базу TermoUnion CRM в один клік.",
+  "version": "1.1.2",
+  "description": "Нарізає талони з PDF, розпізнає поля, звіряє дублі з базою та додає в TermoUnion CRM в один клік.",
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": ["https://driver.tun.com.ua/admin/tickets*"],
@@ -12,6 +15,15 @@
         "content.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://raw.githack.com/AndriyLemishka/TalonTermo/*",
+        "https://rawcdn.githack.com/AndriyLemishka/TalonTermo/*",
+        "file:///*TalonTermo*"
+      ],
+      "js": ["helper_bridge.js"],
+      "run_at": "document_end"
     }
   ]
 }

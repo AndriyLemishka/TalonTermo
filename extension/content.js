@@ -65,9 +65,12 @@
       .dropzone strong { display: block; font-size: 15px; margin-bottom: 4px; }
       .dropzone span { font-size: 12px; color: #5d6c80; }
       label { display: block; font-size: 12px; font-weight: 600; color: #5d6c80; margin-bottom: 4px; }
-      select, input {
+      select, input:not([type="checkbox"]) {
         width: 100%; padding: 7px 9px; border: 1px solid #dde3ec;
         border-radius: 7px; font-size: 13px; box-sizing: border-box; background: #fff;
+      }
+      input[type="checkbox"] {
+        width: 16px; height: 16px; cursor: pointer; accent-color: #e86b1a; vertical-align: middle;
       }
       select.missing, input.missing { border-color: #f59e0b; background: #fffbeb; }
       .toolbar {
@@ -200,6 +203,7 @@
               <div class="actions-right">
                 <span class="db-badge" id="dbCountBadge">База CRM: 0 тал.</span>
                 <span class="dup-badge no-dups" id="dupCounter">✓ Задубльовані: 0</span>
+                <button type="button" class="btn btn-danger" id="deleteSelectedBtn" style="display:none; padding: 9px 12px; font-size: 13px;">🗑️ Видалити вибрані (0)</button>
                 <button type="button" class="btn btn-danger" id="removeDupsBtn" style="display:none; padding: 9px 12px; font-size: 13px;">🗑️ Прибрати задубльовані</button>
                 <button class="btn btn-primary" id="uploadBtn">Залити всі в CRM (0)</button>
               </div>
@@ -208,6 +212,7 @@
             <table>
               <thead>
                 <tr>
+                  <th style="width: 32px; text-align: center;"><input type="checkbox" id="checkAllRows" title="Виділити всі" /></th>
                   <th>#</th>
                   <th>Скрін</th>
                   <th>Пальне *</th>
@@ -230,21 +235,50 @@
 
   const $ = (id) => shadow.getElementById(id);
   let coupons = [];
-  const existingSerials = new Set();
+  const existingSerials = new Map(); // serial -> status label ('У базі', 'Активний', 'Використано', etc.)
   let existingLoaded = false;
+
+  function detectStatusLabel(text) {
+    const low = (text || '').toLowerCase();
+    if (low.includes('використан') || /\bused\b/.test(low)) return 'Використано';
+    if (low.includes('активн') || low.includes('видан') || /\bissued\b/.test(low)) return 'Активний';
+    if (low.includes('простроч') || /\bexpired\b/.test(low)) return 'Прострочено';
+    if (low.includes('сплива')) return 'Спливає';
+    if (low.includes('у базі') || /\bavailable\b/.test(low)) return 'У базі';
+    return '';
+  }
+
+  function setExistingSerial(serial, status) {
+    if (!serial) return;
+    const prev = existingSerials.get(serial);
+    if (!prev || (status && prev === 'ВЖЕ Є В БАЗІ')) {
+      existingSerials.set(serial, status || 'ВЖЕ Є В БАЗІ');
+    }
+  }
 
   function extractSerialsFromHtmlDoc(doc) {
     if (!doc) return;
+    doc.querySelectorAll('.data-table tbody tr').forEach((tr) => {
+      const badgeEl = tr.querySelector('.badge');
+      const statusText = (badgeEl?.textContent || '').trim() || detectStatusLabel(tr.textContent);
+      tr.querySelectorAll('a.cell-link strong, td strong').forEach((el) => {
+        const txt = (el.textContent || '').trim();
+        for (const m of txt.matchAll(/\d{5,28}/g)) {
+          setExistingSerial(m[0], statusText || 'У базі');
+        }
+      });
+    });
+
     doc.querySelectorAll('.data-table a.cell-link strong, .data-table td strong').forEach((el) => {
       const txt = (el.textContent || '').trim();
       for (const m of txt.matchAll(/\d{5,28}/g)) {
-        existingSerials.add(m[0]);
+        setExistingSerial(m[0], 'У базі');
       }
     });
     doc.querySelectorAll('[aria-label*="талон"], [data-confirm*="талон"]').forEach((el) => {
       const attr = (el.getAttribute('aria-label') || el.getAttribute('data-confirm') || '');
       for (const m of attr.matchAll(/\d{5,28}/g)) {
-        existingSerials.add(m[0]);
+        setExistingSerial(m[0], 'У базі');
       }
     });
   }
@@ -265,11 +299,11 @@
     // Layer 1a: Current DOM
     extractSerialsFromHtmlDoc(document);
 
-    // Layer 1b: All paginated HTML database pages (/admin/tickets?page=1..N)
+    // Layer 1b: All paginated HTML database pages with status= (all statuses: вільні, активні/видані, використані)
     const htmlTask = (async () => {
       try {
         let maxPage = getMaxPageFromDoc(document);
-        const page1Res = await fetch(`/admin/tickets?page=1&t=${Date.now()}`, {
+        const page1Res = await fetch(`/admin/tickets?status=&page=1&t=${Date.now()}`, {
           credentials: 'same-origin',
           cache: 'no-store',
         });
@@ -284,7 +318,7 @@
           const batch = [];
           for (let p = start; p < start + 6 && p <= limit; p++) {
             batch.push(
-              fetch(`/admin/tickets?page=${p}&t=${Date.now()}`, {
+              fetch(`/admin/tickets?status=&page=${p}&t=${Date.now()}`, {
                 credentials: 'same-origin',
                 cache: 'no-store',
               })
@@ -314,13 +348,15 @@
         if (ctype.includes('text/html') || /^\s*<!doctype|^\s*<html/i.test(text)) return;
 
         const cleanCsv = text.replace(/^\uFEFF/, '');
-        for (const m of cleanCsv.matchAll(/\b\d{6,28}\b/g)) {
-          existingSerials.add(m[0]);
-        }
         for (const line of cleanCsv.split(/\r?\n/)) {
+          if (!line.trim()) continue;
+          const lineStatus = detectStatusLabel(line) || 'У базі';
+          for (const m of line.matchAll(/\b\d{6,28}\b/g)) {
+            setExistingSerial(m[0], lineStatus);
+          }
           for (const rawCell of line.split(/[;,\t]+/)) {
             const cell = rawCell.replace(/^[='"\s]+|['"\s]+$/g, '');
-            if (/^\d{5,28}$/.test(cell)) existingSerials.add(cell);
+            if (/^\d{5,28}$/.test(cell)) setExistingSerial(cell, lineStatus);
           }
         }
       } catch {
@@ -332,7 +368,7 @@
     existingLoaded = true;
   }
 
-  // Layer 3: Targeted database search (/admin/tickets?q=<prefix>) for uploaded PDF serials
+  // Layer 3: Targeted database search (/admin/tickets?status=&q=<prefix>) for uploaded PDF serials
   async function checkPdfSerialsAgainstDbSearch(pdfCoupons) {
     const prefixes = [];
     const seenPrefixes = new Set();
@@ -349,7 +385,7 @@
 
     for (let i = 0; i < prefixes.length; i += 5) {
       const batch = prefixes.slice(i, i + 5).map((prefix) =>
-        fetch(`/admin/tickets?q=${encodeURIComponent(prefix)}&t=${Date.now()}`, {
+        fetch(`/admin/tickets?status=&q=${encodeURIComponent(prefix)}&t=${Date.now()}`, {
           credentials: 'same-origin',
           cache: 'no-store',
         })
@@ -731,6 +767,16 @@
     return dupCount;
   }
 
+  function syncSelectionUI() {
+    const selectedCount = coupons.filter((c) => c._selected).length;
+    const checkAll = $('checkAllRows');
+    const delBtn = $('deleteSelectedBtn');
+    checkAll.checked = coupons.length > 0 && selectedCount === coupons.length;
+    checkAll.indeterminate = selectedCount > 0 && selectedCount < coupons.length;
+    delBtn.style.display = selectedCount > 0 ? 'inline-flex' : 'none';
+    delBtn.textContent = `🗑️ Видалити вибрані (${selectedCount})`;
+  }
+
   function renderTable() {
     computeDuplicates();
     $('tableWrap').style.display = coupons.length ? 'block' : 'none';
@@ -743,11 +789,14 @@
       if (c._isDup) tr.classList.add('is-duplicate');
 
       let dupTagHtml = '';
-      if (c._inCrm && c._inBatch) dupTagHtml = '<span class="dup-tag">ВЖЕ Є В БАЗІ + ДУБЛЬ</span>';
-      else if (c._inCrm) dupTagHtml = '<span class="dup-tag">ВЖЕ Є В БАЗІ</span>';
+      const st = existingSerials.get((c.serial_number || '').trim()) || '';
+      const stLabel = (st && st !== 'ВЖЕ Є В БАЗІ') ? ` (${st})` : '';
+      if (c._inCrm && c._inBatch) dupTagHtml = `<span class="dup-tag">ВЖЕ Є В БАЗІ${stLabel} + ДУБЛЬ</span>`;
+      else if (c._inCrm) dupTagHtml = `<span class="dup-tag">ВЖЕ Є В БАЗІ${stLabel}</span>`;
       else if (c._inBatch) dupTagHtml = '<span class="dup-tag">ДУБЛЬ У ФАЙЛІ</span>';
 
       tr.innerHTML = `
+        <td style="text-align: center;"><input type="checkbox" class="row-check" data-check="${idx}" ${c._selected ? 'checked' : ''} /></td>
         <td>${idx + 1}</td>
         <td><img class="thumb" src="${c.image_base64}" /></td>
         <td>
@@ -772,6 +821,10 @@
         <td style="min-width: 120px;"><input type="text" data-k="note" value="${c.note}" placeholder="Необов'язково" /></td>
         <td><button class="btn btn-danger" data-del="${idx}">✕</button></td>
       `;
+      tr.querySelector('.row-check').addEventListener('change', (e) => {
+        coupons[idx]._selected = e.target.checked;
+        syncSelectionUI();
+      });
       tr.querySelectorAll('[data-k]').forEach((el) => {
         el.addEventListener('change', () => {
           const k = el.dataset.k;
@@ -786,7 +839,20 @@
       });
       tbody.appendChild(tr);
     });
+    syncSelectionUI();
   }
+
+  $('checkAllRows').addEventListener('change', () => {
+    const checked = $('checkAllRows').checked;
+    coupons.forEach((c) => { c._selected = checked; });
+    shadow.querySelectorAll('.row-check').forEach((cb) => { cb.checked = checked; });
+    syncSelectionUI();
+  });
+
+  $('deleteSelectedBtn').addEventListener('click', () => {
+    coupons = coupons.filter((c) => !c._selected);
+    renderTable();
+  });
 
   $('removeDupsBtn').addEventListener('click', () => {
     const seen = new Set();
@@ -858,7 +924,7 @@
         });
         if (res.ok) {
           ok++;
-          if (c.serial_number) existingSerials.add(c.serial_number.trim());
+          if (c.serial_number) existingSerials.set(c.serial_number.trim(), 'У базі');
           const html = await res.text();
           const mTok = html.match(/name=["']_token["'][^>]*value=["']([^"']+)["']/i)
             || html.match(/value=["']([^"']+)["'][^>]*name=["']_token["']/i);
