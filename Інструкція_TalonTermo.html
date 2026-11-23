@@ -178,29 +178,31 @@
   <div class="section">
     <div class="section-head">
       <span class="part-num">Частина 1</span>
-      <h2>Встановлення на комп’ютер (1 раз за 30 секунд)</h2>
+      <h2>Підготовка Google Chrome (1 раз)</h2>
     </div>
     <ul class="steps">
-      <li><span class="step-id">1.1</span><div>Натисни <kbd>Win</kbd> + <kbd>R</kbd>, введи <code>cmd</code> і натисни <kbd>Enter</kbd> — відкриється командний рядок.</div></li>
-      <li><span class="step-id">1.2</span><div>Скопіюй і встав у вікно <code>cmd</code> (правий клік миші або <kbd>Ctrl</kbd>+<kbd>V</kbd>) цю команду та натисни <kbd>Enter</kbd>:</div></li>
+      <li><span class="step-id">1.1</span><div>Відкрий Google Chrome, скопіюй і встав в адресний рядок <code>chrome://extensions</code> та натисни <kbd>Enter</kbd>.</div></li>
+      <li><span class="step-id">1.2</span><div>У правому верхньому куті увімкни перемикач <strong>«Режим розробника»</strong> (<em>Developer mode</em>).</div></li>
     </ul>
-    <div class="cmd-box" id="cmdText">powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/AndriyLemishka/TalonTermo/main/install.ps1 | iex"</div>
-    <div class="info">
-      <div><strong>Автоматично:</strong> завантажить розширення в <code>%LOCALAPPDATA%\TalonTermo\extension</code>, скопіює шлях у буфер обміну та створить ярлик <code>Оновити_TalonTermo.cmd</code>. Python або Git не потрібні.</div>
-      <a class="link-btn link-btn--green" id="dlCmdBtn" href="https://github.com/AndriyLemishka/TalonTermo/raw/main/%D0%92%D1%81%D1%82%D0%B0%D0%BD%D0%BE%D0%B2%D0%B8%D1%82%D0%B8_TalonTermo.cmd" onclick="event.preventDefault(); downloadInstaller()">⬇️ Завантажити .cmd</a>
-    </div>
   </div>
 
   <div class="section">
     <div class="section-head">
       <span class="part-num">Частина 2</span>
-      <h2>Підключення розширення в Google Chrome (1 раз)</h2>
+      <h2>Завантаження з GitHub і підключення (1 раз за 30 секунд)</h2>
     </div>
     <ul class="steps">
-      <li><span class="step-id">2.1</span><div>Відкрий сторінку розширень Chrome: <a class="link-btn" href="https://raw.githack.com/AndriyLemishka/TalonTermo/main/open.html?target=extensions" target="_blank" data-open-extensions="1" onclick="handleExtensionsClick(event, this)">🌐 chrome://extensions ↗</a> (якщо відкриється підказка — встав у нову вкладку та натисни <kbd>Enter</kbd>).</div></li>
-      <li><span class="step-id">2.2</span><div>У правому верхньому куті увімкни перемикач <strong>«Режим розробника»</strong> (<em>Developer mode</em>).</div></li>
-      <li><span class="step-id">2.3</span><div>У лівому верхньому куті натисни <strong>«Завантажити розпаковане»</strong> (<em>Load unpacked</em>).</div></li>
-      <li><span class="step-id">2.4</span><div>У полі шляху натисни <kbd>Ctrl</kbd> + <kbd>V</kbd> (шлях уже в буфері після Кроку 1.2), натисни <kbd>Enter</kbd> та підтвердь <strong>«Вибір папки»</strong>.</div></li>
+      <li><span class="step-id">2.1</span><div>Натисни <kbd>Win</kbd> + <kbd>R</kbd>, введи <code>cmd</code> і натисни <kbd>Enter</kbd> — відкриється командний рядок.</div></li>
+      <li><span class="step-id">2.2</span><div>Скопіюй і встав у вікно <code>cmd</code> (правий клік миші або <kbd>Ctrl</kbd>+<kbd>V</kbd>) цю команду та натисни <kbd>Enter</kbd>:</div></li>
+    </ul>
+    <div class="cmd-box" id="cmdText">powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/AndriyLemishka/TalonTermo/main/install.ps1 | iex"</div>
+    <div class="info">
+      <div><strong>Автоматично:</strong> завантажить файли в <code>%LOCALAPPDATA%\TalonTermo\extension</code>, саме скопіює цей шлях у буфер обміну та створить ярлик <code>Оновити_TalonTermo.cmd</code>. Python або Git не потрібні.</div>
+      <a class="link-btn link-btn--green" id="dlCmdBtn" href="https://github.com/AndriyLemishka/TalonTermo/raw/main/%D0%92%D1%81%D1%82%D0%B0%D0%BD%D0%BE%D0%B2%D0%B8%D1%82%D0%B8_TalonTermo.cmd" onclick="event.preventDefault(); downloadInstaller()">⬇️ Завантажити .cmd</a>
+    </div>
+    <ul class="steps" style="margin-top: 6px;">
+      <li><span class="step-id">2.3</span><div>Повернися в Chrome на вкладку <code>chrome://extensions</code> і натисни ліворуч угорі <strong>«Завантажити розпаковане»</strong> (<em>Load unpacked</em>).</div></li>
+      <li><span class="step-id">2.4</span><div>У полі шляху вікна вибору папки просто натисни <kbd>Ctrl</kbd> + <kbd>V</kbd> (шлях уже в буфері після Кроку 2.2), натисни <kbd>Enter</kbd> та підтвердь <strong>«Вибір папки»</strong>.</div></li>
     </ul>
   </div>
 
@@ -225,7 +227,7 @@
     </div>
     <ul class="steps">
       <li><span class="step-id">4.1</span><div>Коли на GitHub з’являється нова версія, у вікні імпорту з’являється банер <strong>«🔔 Доступна нова версія»</strong>.</div></li>
-      <li><span class="step-id">4.2</span><div>Двічі клікни ярлик <code>Оновити_TalonTermo.cmd</code> на Робочому столі (або виконай команду з Частини 1) та натисни <kbd>F5</kbd> у CRM (або 🔄 у <code>chrome://extensions</code>).</div></li>
+      <li><span class="step-id">4.2</span><div>Двічі клікни ярлик <code>Оновити_TalonTermo.cmd</code> на Робочому столі (або виконай команду з Частини 2) та натисни <kbd>F5</kbd> у CRM (або 🔄 у <code>chrome://extensions</code>).</div></li>
     </ul>
     <div class="note">
       <strong>Безпека і підказка:</strong> PDF обробляється локально в пам’яті браузера без сторонніх серверів. Усі кнопки працюють і з <code>Інструкція_TalonTermo.pdf</code> (через посилання), і миттєво в <code>Інструкція_TalonTermo.html</code>.
