@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TalonAuto — Нарізка та завантаження талонів у CRM</title>
+  <style>
+    :root {
+      --bg: #f4f6f9;
+      --card: #ffffff;
+      --border: #dde3ec;
+      --text: #162235;
+      --muted: #5d6c80;
+      --primary: #e86b1a;
+      --primary-hover: #d15b10;
+      --dark: #0f253e;
+      --ok: #15803d;
+      --warn: #b45309;
+      --err: #b91c1c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      background: var(--dark);
+      color: #fff;
+      padding: 16px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    header h1 { margin: 0; font-size: 20px; font-weight: 700; }
+    header small { color: #a7b8ce; font-size: 13px; }
+    .container { max-width: 1360px; margin: 24px auto; padding: 0 20px 60px; }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 8px rgba(15, 37, 62, 0.04);
+    }
+    .upload-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: center;
+    }
+    .dropzone {
+      border: 2px dashed #b9c5d6;
+      border-radius: 12px;
+      padding: 26px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: 0.15s border-color, 0.15s background;
+      background: #fafbfd;
+    }
+    .dropzone.dragover { border-color: var(--primary); background: #fff6f0; }
+    .dropzone strong { display: block; font-size: 16px; margin-bottom: 4px; }
+    .dropzone span { color: var(--muted); font-size: 13px; }
+
+    .controls { display: flex; flex-direction: column; gap: 10px; min-width: 240px; }
+    label { font-size: 12px; font-weight: 600; color: var(--muted); display: block; margin-bottom: 4px; }
+    select, input[type="text"], input[type="number"], input[type="date"] {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 14px;
+      background: #fff;
+      color: var(--text);
+    }
+    select.missing, input.missing { border-color: #f59e0b; background: #fffbeb; }
+
+    .btn {
+      border: none;
+      border-radius: 9px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: 0.15s opacity, 0.15s background;
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+    .btn-dark { background: var(--dark); color: #fff; }
+    .btn-ghost { background: #eef2f7; color: var(--text); }
+    .btn-danger { background: #fee2e2; color: var(--err); padding: 6px 10px; font-size: 12px; }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .bulk-group { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+    .bulk-group > div { min-width: 145px; }
+    .actions-group { display: flex; flex-wrap: wrap; gap: 10px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th {
+      text-align: left;
+      padding: 10px 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    td {
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .thumb {
+      width: 68px;
+      height: 88px;
+      object-fit: contain;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+      cursor: zoom-in;
+    }
+    .res-badge {
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+      text-align: center;
+    }
+    .status-box {
+      padding: 14px 16px;
+      border-radius: 10px;
+      background: #f1f5f9;
+      border: 1px solid var(--border);
+      margin-bottom: 16px;
+      display: none;
+    }
+    .status-box.visible { display: block; }
+    .progress-bar {
+      height: 8px;
+      background: #dbe3ee;
+      border-radius: 99px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+    .progress-fill {
+      height: 100%;
+      background: var(--primary);
+      width: 0%;
+      transition: width 0.25s;
+    }
+    .log-list {
+      margin: 10px 0 0;
+      padding-left: 18px;
+      max-height: 140px;
+      overflow-y: auto;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.72);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+      padding: 20px;
+    }
+    .modal.open { display: flex; }
+    .modal img { max-width: 90vw; max-height: 90vh; border-radius: 10px; background: #fff; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>TalonAuto</h1>
+      <small>Автоматична нарізка PDF-талонів, розпізнавання та завантаження в TermoUnion CRM</small>
+    </div>
+    <small id="countBadge">Талонів: 0</small>
+  </header>
+
+  <div class="container">
+    <div class="card">
+      <div class="upload-row">
+        <div class="dropzone" id="dropzone">
+          <strong>Перетягни PDF з талонами сюди або натисни для вибору</strong>
+          <span>Підтримуються багатосторінкові PDF (ОККО 3×3 та інші сітки)</span>
+          <input type="file" id="pdfInput" accept="application/pdf" hidden />
+        </div>
+        <div class="controls">
+          <div>
+            <label for="defaultFuel">Пальне за замовчуванням (якщо в PDF картинкою)</label>
+            <select id="defaultFuel">
+              <option value="">— авто / обрати вручну —</option>
+              <option value="ДП">ДП</option>
+              <option value="А-95">А-95</option>
+              <option value="А-92">А-92</option>
+              <option value="Газ">Газ</option>
+            </select>
+          </div>
+          <button class="btn btn-ghost" id="reparseBtn" disabled>Перечитати PDF</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="status-box" id="statusBox">
+      <div id="statusText">Готово</div>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <ul class="log-list" id="logList"></ul>
+    </div>
+
+    <div class="card" id="tableCard" style="display: none;">
+      <div class="toolbar">
+        <div class="bulk-group">
+          <div>
+            <label>Масово: Пальне</label>
+            <select id="bulkFuel">
+              <option value="">Оберіть...</option>
+              <option value="ДП">ДП</option>
+              <option value="А-95">А-95</option>
+              <option value="А-92">А-92</option>
+              <option value="Газ">Газ</option>
+            </select>
+          </div>
+          <div>
+            <label>Масово: АЗС</label>
+            <select id="bulkAzs">
+              <option value="">Оберіть...</option>
+              <option value="ОККО">ОККО</option>
+              <option value="WOG">WOG</option>
+              <option value="УКРНАФТА">УКРНАФТА</option>
+            </select>
+          </div>
+          <div>
+            <label>Масово: Примітка</label>
+            <input type="text" id="bulkNote" placeholder="Наприклад: партія 23.11" />
+          </div>
+          <button class="btn btn-ghost" id="applyBulkBtn">Застосувати до всіх</button>
+        </div>
+
+        <div class="actions-group">
+          <button class="btn btn-ghost" id="downloadZipBtn">Завантажити скріни (.zip)</button>
+          <button class="btn btn-dark" id="dryRunBtn">Тест (1-й без відправки)</button>
+          <button class="btn btn-primary" id="uploadAllBtn">Залити всі в CRM</button>
+        </div>
+      </div>
+
+      <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Скрін</th>
+              <th>Тип пального *</th>
+              <th>АЗС *</th>
+              <th>Номінал, л *</th>
+              <th>Термін придатності *</th>
+              <th>К-сть</th>
+              <th>Номер талона</th>
+              <th>Примітка</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="couponsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="imgModal" onclick="this.classList.remove('open')">
+    <img id="modalImg" src="" alt="Перегляд талона" />
+  </div>
+
+  <script>
+    let coupons = [];
+    let lastFile = null;
+
+    const dropzone = document.getElementById('dropzone');
+    const pdfInput = document.getElementById('pdfInput');
+    const defaultFuel = document.getElementById('defaultFuel');
+    const reparseBtn = document.getElementById('reparseBtn');
+    const tableCard = document.getElementById('tableCard');
+    const couponsBody = document.getElementById('couponsBody');
+    const countBadge = document.getElementById('countBadge');
+    const statusBox = document.getElementById('statusBox');
+    const statusText = document.getElementById('statusText');
+    const progressFill = document.getElementById('progressFill');
+    const logList = document.getElementById('logList');
+
+    dropzone.addEventListener('click', () => pdfInput.click());
+    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+    });
+    pdfInput.addEventListener('change', () => {
+      if (pdfInput.files[0]) handleFile(pdfInput.files[0]);
+    });
+    reparseBtn.addEventListener('click', () => {
+      if (lastFile) handleFile(lastFile);
+    });
+    defaultFuel.addEventListener('change', () => {
+      if (defaultFuel.value && coupons.length) {
+        coupons.forEach(c => { c.fuel_type = defaultFuel.value; });
+        renderTable();
+      }
+    });
+
+    async function handleFile(file) {
+      lastFile = file;
+      reparseBtn.disabled = false;
+      showStatus(`Розпізнаю ${file.name}...`, 15);
+      logList.innerHTML = '';
+
+      const url = `/api/parse?default_fuel=${encodeURIComponent(defaultFuel.value)}`;
+      const res = await fetch(url, { method: 'POST', body: file });
+      const data = await res.json();
+      if (!res.ok) {
+        showStatus(`Помилка: ${data.error || 'не вдалося прочитати PDF'}`, 0);
+        return;
+      }
+
+      coupons = data.coupons || [];
+      renderTable();
+      showStatus(`Розпізнано талонів: ${coupons.length}. Перевір поля і натисни «Залити всі в CRM».`, 100);
+    }
+
+    function showStatus(text, pct) {
+      statusBox.classList.add('visible');
+      statusText.textContent = text;
+      progressFill.style.width = `${pct}%`;
+    }
+
+    function addLog(msg) {
+      const li = document.createElement('li');
+      li.textContent = msg;
+      logList.appendChild(li);
+      logList.scrollTop = logList.scrollHeight;
+    }
+
+    function renderTable() {
+      countBadge.textContent = `Талонів: ${coupons.length}`;
+      tableCard.style.display = coupons.length ? 'block' : 'none';
+      couponsBody.innerHTML = '';
+
+      coupons.forEach((c, idx) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${idx + 1}</td>
+          <td>
+            <img class="thumb" src="${c.image_base64}" onclick="openModal('${c.image_base64}')" />
+            <span class="res-badge">${c.width}×${c.height}</span>
+          </td>
+          <td>
+            <select class="${!c.fuel_type ? 'missing' : ''}" onchange="updateField(${idx}, 'fuel_type', this.value); this.classList.toggle('missing', !this.value)">
+              <option value="">Оберіть...</option>
+              ${['ДП', 'А-95', 'А-92', 'Газ'].map(v => `<option value="${v}" ${c.fuel_type === v ? 'selected' : ''}>${v}</option>`).join('')}
+            </select>
+          </td>
+          <td>
+            <select class="${!c.azs ? 'missing' : ''}" onchange="updateField(${idx}, 'azs', this.value); this.classList.toggle('missing', !this.value)">
+              <option value="">Оберіть...</option>
+              ${['ОККО', 'WOG', 'УКРНАФТА'].map(v => `<option value="${v}" ${c.azs === v ? 'selected' : ''}>${v}</option>`).join('')}
+            </select>
+          </td>
+          <td style="width: 95px;">
+            <input type="number" step="0.01" class="${!c.nominal ? 'missing' : ''}" value="${c.nominal}" onchange="updateField(${idx}, 'nominal', this.value)" />
+          </td>
+          <td style="width: 145px;">
+            <input type="date" class="${!c.expires_at ? 'missing' : ''}" value="${c.expires_at}" onchange="updateField(${idx}, 'expires_at', this.value)" />
+          </td>
+          <td style="width: 75px;">
+            <input type="number" min="1" max="20" value="${c.quantity}" onchange="updateField(${idx}, 'quantity', Number(this.value))" />
+          </td>
+          <td style="min-width: 195px;">
+            <input type="text" value="${c.serial_number}" onchange="updateField(${idx}, 'serial_number', this.value)" />
+          </td>
+          <td style="min-width: 140px;">
+            <input type="text" value="${c.note || ''}" placeholder="Необов'язково" onchange="updateField(${idx}, 'note', this.value)" />
+          </td>
+          <td>
+            <button class="btn btn-danger" onclick="removeRow(${idx})">✕</button>
+          </td>
+        `;
+        couponsBody.appendChild(tr);
+      });
+    }
+
+    window.updateField = (idx, key, val) => { coupons[idx][key] = val; };
+    window.removeRow = (idx) => { coupons.splice(idx, 1); renderTable(); };
+    window.openModal = (src) => {
+      document.getElementById('modalImg').src = src;
+      document.getElementById('imgModal').classList.add('open');
+    };
+
+    document.getElementById('applyBulkBtn').addEventListener('click', () => {
+      const f = document.getElementById('bulkFuel').value;
+      const a = document.getElementById('bulkAzs').value;
+      const n = document.getElementById('bulkNote').value;
+      coupons.forEach(c => {
+        if (f) c.fuel_type = f;
+        if (a) c.azs = a;
+        if (n !== '') c.note = n;
+      });
+      renderTable();
+    });
+
+    document.getElementById('downloadZipBtn').addEventListener('click', async () => {
+      const res = await fetch('/api/export-zip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coupons }),
+      });
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'talony_screens.zip';
+      a.click();
+    });
+
+    async function startUpload(dryRun) {
+      const invalid = coupons.findIndex(c => !c.fuel_type || !c.azs || !c.nominal || !c.expires_at);
+      if (invalid !== -1) {
+        alert(`Заповни обов'язкові поля у рядку #${invalid + 1} (або скористайся «Застосувати до всіх» зверху).`);
+        return;
+      }
+
+      document.getElementById('uploadAllBtn').disabled = true;
+      document.getElementById('dryRunBtn').disabled = true;
+      logList.innerHTML = '';
+      showStatus('Запускаю браузер Chrome...', 5);
+
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coupons, dry_run: dryRun }),
+      });
+      const { job_id } = await res.json();
+
+      const es = new EventSource(`/api/upload-progress/${job_id}`);
+      es.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        let pct = 10;
+        if (msg.total && msg.current) {
+          pct = Math.round((msg.current / msg.total) * 100);
+        } else if (msg.status === 'done') {
+          pct = 100;
+        }
+        showStatus(msg.message || msg.status, pct);
+        if (msg.message) addLog(msg.message);
+
+        if (msg.status === 'done' || msg.status === 'fatal_error') {
+          es.close();
+          document.getElementById('uploadAllBtn').disabled = false;
+          document.getElementById('dryRunBtn').disabled = false;
+        }
+      };
+    }
+
+    document.getElementById('dryRunBtn').addEventListener('click', () => startUpload(true));
+    document.getElementById('uploadAllBtn').addEventListener('click', () => {
+      if (confirm(`Додати ${coupons.length} талон(ів) у базу TermoUnion CRM?`)) {
+        startUpload(false);
+      }
+    });
+  </script>
+</body>
+</html>
