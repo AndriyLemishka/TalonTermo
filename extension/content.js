@@ -103,6 +103,31 @@
       }
       .update-banner.visible { display: flex; }
       .btn-update { background: #d97706; color: #fff; padding: 6px 12px; font-size: 12px; }
+      .actions-right { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+      .dup-badge {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 7px 12px; border-radius: 8px; font-size: 13px; font-weight: 700;
+      }
+      .dup-badge.has-dups { background: #fee2e2; color: #b91c1c; border: 1px solid #f87171; }
+      .dup-badge.no-dups { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+      tr.is-duplicate { background: #fee2e2 !important; }
+      tr.is-duplicate td {
+        background: #fee2e2 !important;
+        border-bottom-color: #fca5a5 !important;
+        color: #991b1b;
+        font-weight: 600;
+      }
+      tr.is-duplicate input, tr.is-duplicate select {
+        border-color: #f87171 !important;
+        background: #fff5f5 !important;
+        color: #991b1b;
+        font-weight: 600;
+      }
+      .dup-tag {
+        display: inline-block; background: #dc2626; color: #fff;
+        font-size: 10px; font-weight: 700; padding: 2px 6px;
+        border-radius: 4px; margin-top: 3px;
+      }
     </style>
 
     <div class="overlay" id="overlay">
@@ -167,7 +192,11 @@
                 </div>
                 <button class="btn btn-ghost" id="applyBulkBtn">Застосувати до всіх</button>
               </div>
-              <button class="btn btn-primary" id="uploadBtn">Залити всі в CRM (0)</button>
+              <div class="actions-right">
+                <span class="dup-badge no-dups" id="dupCounter">✓ Задубльовані: 0</span>
+                <button type="button" class="btn btn-danger" id="removeDupsBtn" style="display:none; padding: 9px 12px; font-size: 13px;">🗑️ Прибрати задубльовані</button>
+                <button class="btn btn-primary" id="uploadBtn">Залити всі в CRM (0)</button>
+              </div>
             </div>
 
             <table>
@@ -195,6 +224,87 @@
 
   const $ = (id) => shadow.getElementById(id);
   let coupons = [];
+  const existingSerials = new Set();
+  let existingLoaded = false;
+
+  async function loadExistingSerials(force = false) {
+    if (existingLoaded && !force) return;
+
+    // 1. Collect serials already visible in the current CRM table DOM
+    document.querySelectorAll('.data-table a.cell-link strong, .data-table td strong').forEach((el) => {
+      const txt = (el.textContent || '').trim();
+      if (/^\d{6,28}$/.test(txt)) existingSerials.add(txt);
+    });
+
+    // 2. Fetch full CSV export from /admin/tickets/export (or href on export button)
+    const exportHref = document.querySelector('a[href*="/admin/tickets/export"]')?.getAttribute('href') || '/admin/tickets/export';
+    let exportOk = false;
+    try {
+      const url = new URL(exportHref, window.location.origin).pathname;
+      const res = await fetch(`${url}?t=${Date.now()}`, { credentials: 'same-origin', cache: 'no-store' });
+      if (res.ok) {
+        const ctype = (res.headers.get('content-type') || '').toLowerCase();
+        const text = await res.text();
+        if (!ctype.includes('text/html') && !/^\s*<!doctype|^\s*<html/i.test(text)) {
+          exportOk = true;
+          const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter((l) => l.trim());
+          if (lines.length) {
+            const firstLine = lines[0];
+            const delim = (firstLine.split(';').length >= firstLine.split(',').length) ? ';' : ',';
+            const splitRow = (row) => row.split(delim).map((cell) => cell.trim().replace(/^["']|["']$/g, '').trim());
+            const headers = splitRow(firstLine).map((h) => h.toLowerCase());
+            const serialCol = headers.findIndex((h) =>
+              h.includes('номер') || h.includes('талон') || h.includes('serial') || h.includes('code') || h.includes('number')
+            );
+
+            const startRow = serialCol !== -1 ? 1 : 0;
+            for (let i = startRow; i < lines.length; i++) {
+              const cells = splitRow(lines[i]);
+              if (serialCol !== -1 && cells[serialCol]) {
+                const val = cells[serialCol];
+                if (val) existingSerials.add(val);
+              } else {
+                for (const cell of cells) {
+                  if (/^\d{6,28}$/.test(cell)) existingSerials.add(cell);
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore and try pagination fallback below
+    }
+
+    // 3. Fallback: scan pagination pages if CSV export wasn't available
+    if (!exportOk) {
+      try {
+        const pageLinks = Array.from(document.querySelectorAll('.pagination a.page-btn[href]'))
+          .map((a) => a.getAttribute('href'))
+          .filter(Boolean);
+        let maxPage = 1;
+        for (const href of pageLinks) {
+          const m = href.match(/[?&]page=(\d+)/);
+          if (m) maxPage = Math.max(maxPage, Number(m[1]));
+        }
+        const limit = Math.min(maxPage, 30);
+        for (let p = 2; p <= limit; p++) {
+          const res = await fetch(`/admin/tickets?page=${p}`, { credentials: 'same-origin', cache: 'no-store' });
+          if (!res.ok) break;
+          const html = await res.text();
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          doc.querySelectorAll('.data-table a.cell-link strong, .data-table td strong').forEach((el) => {
+            const txt = (el.textContent || '').trim();
+            if (/^\d{6,28}$/.test(txt)) existingSerials.add(txt);
+          });
+        }
+      } catch {
+        // Ignore network errors
+      }
+    }
+
+    existingLoaded = true;
+  }
 
   shadow.querySelectorAll('.fuel-pill').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -251,6 +361,7 @@
   openBtn.addEventListener('click', () => {
     $('overlay').classList.add('open');
     checkForUpdates();
+    loadExistingSerials();
   });
   $('closeBtn').addEventListener('click', () => $('overlay').classList.remove('open'));
   $('dropzone').addEventListener('click', () => $('fileInput').click());
@@ -432,7 +543,8 @@
 
   async function processPdf(file) {
     coupons = [];
-    setStatus(`Читаю ${file.name}...`, 10);
+    setStatus(`Читаю ${file.name} та перевіряю дублі в базі...`, 10);
+    const existingPromise = loadExistingSerials(true);
     const buf = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
     const defaultFuel = $('defaultFuel').value;
@@ -521,11 +633,47 @@
       }
     }
 
+    await existingPromise;
     renderTable();
-    setStatus(`Готово! Розпізнано талонів: ${coupons.length}. Перевір поля і натисни «Залити всі в CRM».`, 100);
+    const dupCount = coupons.filter((c) => c._isDup).length;
+    const dupNote = dupCount ? ` (знайдено задубльованих: ${dupCount})` : '';
+    setStatus(`Готово! Розпізнано талонів: ${coupons.length}${dupNote}. Перевір поля і натисни «Залити всі в CRM».`, 100);
+  }
+
+  function computeDuplicates() {
+    const counts = new Map();
+    for (const c of coupons) {
+      const s = (c.serial_number || '').trim();
+      if (!s) continue;
+      counts.set(s, (counts.get(s) || 0) + 1);
+    }
+
+    let dupCount = 0;
+    for (const c of coupons) {
+      const s = (c.serial_number || '').trim();
+      c._inCrm = Boolean(s && existingSerials.has(s));
+      c._inBatch = Boolean(s && counts.get(s) > 1);
+      c._isDup = c._inCrm || c._inBatch;
+      if (c._isDup) dupCount++;
+    }
+
+    const counter = $('dupCounter');
+    const removeBtn = $('removeDupsBtn');
+    if (dupCount > 0) {
+      counter.textContent = `⚠️ Задубльовані: ${dupCount}`;
+      counter.className = 'dup-badge has-dups';
+      removeBtn.style.display = 'inline-flex';
+      removeBtn.textContent = `🗑️ Прибрати задубльовані (${dupCount})`;
+    } else {
+      counter.textContent = '✓ Задубльовані: 0';
+      counter.className = 'dup-badge no-dups';
+      removeBtn.style.display = 'none';
+    }
+    return dupCount;
   }
 
   function renderTable() {
+    computeDuplicates();
     $('tableWrap').style.display = coupons.length ? 'block' : 'none';
     $('uploadBtn').textContent = `Залити всі в CRM (${coupons.length})`;
     const tbody = $('tbody');
@@ -533,6 +681,13 @@
 
     coupons.forEach((c, idx) => {
       const tr = document.createElement('tr');
+      if (c._isDup) tr.classList.add('is-duplicate');
+
+      let dupTagHtml = '';
+      if (c._inCrm && c._inBatch) dupTagHtml = '<span class="dup-tag">ВЖЕ Є В БАЗІ + ДУБЛЬ</span>';
+      else if (c._inCrm) dupTagHtml = '<span class="dup-tag">ВЖЕ Є В БАЗІ</span>';
+      else if (c._inBatch) dupTagHtml = '<span class="dup-tag">ДУБЛЬ У ФАЙЛІ</span>';
+
       tr.innerHTML = `
         <td>${idx + 1}</td>
         <td><img class="thumb" src="${c.image_base64}" /></td>
@@ -551,7 +706,10 @@
         <td style="width: 82px;"><input type="number" step="0.01" class="${!c.nominal ? 'missing' : ''}" data-k="nominal" value="${c.nominal}" /></td>
         <td style="width: 135px;"><input type="date" class="${!c.expires_at ? 'missing' : ''}" data-k="expires_at" value="${c.expires_at}" /></td>
         <td style="width: 65px;"><input type="number" min="1" max="20" data-k="quantity" value="${c.quantity}" /></td>
-        <td style="min-width: 175px;"><input type="text" data-k="serial_number" value="${c.serial_number}" /></td>
+        <td style="min-width: 175px;">
+          <input type="text" data-k="serial_number" value="${c.serial_number}" />
+          ${dupTagHtml}
+        </td>
         <td style="min-width: 120px;"><input type="text" data-k="note" value="${c.note}" placeholder="Необов'язково" /></td>
         <td><button class="btn btn-danger" data-del="${idx}">✕</button></td>
       `;
@@ -560,6 +718,7 @@
           const k = el.dataset.k;
           coupons[idx][k] = k === 'quantity' ? Number(el.value) : el.value;
           el.classList.toggle('missing', !el.value && k !== 'note' && k !== 'serial_number');
+          if (k === 'serial_number') renderTable();
         });
       });
       tr.querySelector('[data-del]').addEventListener('click', () => {
@@ -569,6 +728,18 @@
       tbody.appendChild(tr);
     });
   }
+
+  $('removeDupsBtn').addEventListener('click', () => {
+    const seen = new Set();
+    coupons = coupons.filter((c) => {
+      const s = (c.serial_number || '').trim();
+      if (c._inCrm) return false;
+      if (s && seen.has(s)) return false;
+      if (s) seen.add(s);
+      return true;
+    });
+    renderTable();
+  });
 
   $('applyBulkBtn').addEventListener('click', () => {
     const f = $('bulkFuel').value;
@@ -628,6 +799,7 @@
         });
         if (res.ok) {
           ok++;
+          if (c.serial_number) existingSerials.add(c.serial_number.trim());
           const html = await res.text();
           const mTok = html.match(/name=["']_token["'][^>]*value=["']([^"']+)["']/i)
             || html.match(/value=["']([^"']+)["'][^>]*name=["']_token["']/i);

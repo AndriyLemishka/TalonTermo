@@ -1,5 +1,6 @@
-﻿[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 
 $repoZip = 'https://github.com/AndriyLemishka/TalonTermo/archive/refs/heads/main.zip'
 $baseDir = Join-Path $env:LOCALAPPDATA 'TalonTermo'
@@ -12,7 +13,8 @@ Write-Host '==> Завантаження TalonTermo з GitHub...' -ForegroundCol
 Invoke-WebRequest -Uri $repoZip -OutFile $tmpZip -UseBasicParsing
 
 Write-Host '==> Розпакування файлів...' -ForegroundColor Cyan
-Expand-Archive -Path $tmpZip -DestinationPath $tmpDir -Force
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::ExtractToDirectory($tmpZip, $tmpDir)
 $extractedExt = Join-Path $tmpDir 'TalonTermo-main\extension'
 if (-not (Test-Path $extractedExt)) {
     throw "Не знайдено папку extension в архіві ($extractedExt)"
@@ -33,12 +35,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubus
 pause
 "@
 $localCmd = Join-Path $baseDir 'Оновити_TalonTermo.cmd'
-Set-Content -Path $localCmd -Value $updaterContent -Encoding UTF8
+Set-Content -Path $localCmd -Value $updaterContent -Encoding Ascii
 
 $desktop = [Environment]::GetFolderPath('Desktop')
 if ($desktop -and (Test-Path $desktop)) {
     $desktopCmd = Join-Path $desktop 'Оновити_TalonTermo.cmd'
-    Set-Content -Path $desktopCmd -Value $updaterContent -Encoding UTF8 -ErrorAction SilentlyContinue
+    Set-Content -Path $desktopCmd -Value $updaterContent -Encoding Ascii -ErrorAction SilentlyContinue
 }
 
 try {

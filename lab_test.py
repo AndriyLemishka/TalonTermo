@@ -75,6 +75,7 @@ def start_mock_crm_server():
     state = {
         "submissions": [],
         "current_token": "bb44ca7dde6fb8a24576f33aaa5298e45f081e1d0991b9141f6a083b6b6d044c",
+        "export_csv": "ID;Номер талона;Пальне\n",
         "lock": threading.Lock(),
     }
 
@@ -83,7 +84,14 @@ def start_mock_crm_server():
             pass  # silence HTTP access logs
 
         def do_GET(self):
-            if self.path.startswith("/admin/tickets"):
+            if self.path.startswith("/admin/tickets/export"):
+                body = state["export_csv"].encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/csv; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            elif self.path.startswith("/admin/tickets"):
                 html = raw_html.replace(
                     "bb44ca7dde6fb8a24576f33aaa5298e45f081e1d0991b9141f6a083b6b6d044c",
                     state["current_token"],
@@ -297,6 +305,54 @@ def run_extension_e2e_tests():
                 assert sub["serial_number"] == str(99999600000025240768 + i)
                 verify_png_data_url(sub["photo_data"])
             print("  [OK] Extension E2E A95_PDF: 100/100 rows parsed (incl. 1x1 page 12) & POSTed cleanly")
+
+            # --- Scenario 3: Duplicate detection (2 coupons already exist in CRM) ---
+            state["submissions"].clear()
+            state["export_csv"] = (
+                "ID;Номер талона;Пальне\n"
+                "101;99999600000025241325;ДП\n"
+                "102;99999600000025241330;ДП\n"
+            )
+            page.goto(crm_url, wait_until="domcontentloaded")
+            inject_extension(page)
+
+            page.click("#talonauto-open-btn")
+            page.locator("#talonauto-host >> #fileInput").set_input_files(str(DP_PDF))
+
+            page.wait_for_function(
+                """() => {
+                    const host = document.getElementById('talonauto-host');
+                    if (!host || !host.shadowRoot) return false;
+                    return host.shadowRoot.querySelectorAll('#tbody tr').length === 37;
+                }""",
+                timeout=30_000,
+            )
+
+            dup_info = page.evaluate("""() => {
+                const sr = document.getElementById('talonauto-host').shadowRoot;
+                const counterText = sr.getElementById('dupCounter').textContent.trim();
+                const dupSerials = Array.from(sr.querySelectorAll('#tbody tr.is-duplicate'))
+                    .map(tr => tr.querySelector('[data-k="serial_number"]').value);
+                return { counterText, dupSerials };
+            }""")
+            assert dup_info["counterText"] == "⚠️ Задубльовані: 2", f"Unexpected counter: {dup_info['counterText']}"
+            assert dup_info["dupSerials"] == ["99999600000025241325", "99999600000025241330"], (
+                f"Unexpected dup serials: {dup_info['dupSerials']}"
+            )
+
+            page.locator("#talonauto-host >> #removeDupsBtn").click()
+            after_remove = page.evaluate("""() => {
+                const sr = document.getElementById('talonauto-host').shadowRoot;
+                return {
+                    rowCount: sr.querySelectorAll('#tbody tr').length,
+                    counterText: sr.getElementById('dupCounter').textContent.trim(),
+                    dupRowCount: sr.querySelectorAll('#tbody tr.is-duplicate').length,
+                };
+            }""")
+            assert after_remove["rowCount"] == 35, f"Expected 35 rows after removing 2 dups, got {after_remove['rowCount']}"
+            assert after_remove["counterText"] == "✓ Задубльовані: 0", f"Unexpected counter after remove: {after_remove['counterText']}"
+            assert after_remove["dupRowCount"] == 0
+            print("  [OK] Extension E2E Duplicate Check: 2 duplicates highlighted in red, counted & removed cleanly")
 
             assert not console_errors, f"Browser page errors detected: {console_errors}"
             browser.close()
